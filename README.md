@@ -1,2 +1,3 @@
-# AllPerformanceCounters
-Enumerates and prints all system performance counters
+# Seek Text Lines
+
+Seek for text blocks and gaps between.
