@@ -7,9 +7,10 @@ const int ResampledImageWidth = 32;
 const double TextMaxBrightness = 0.3;
 const float BinaryLuminanceThreshold = 0.3f;
 Color KnifeColor = Color.Magenta;
+Color GapColor = Color.Cyan;
 
 string sourceImageFilename = args.Length > 0 && string.IsNullOrWhiteSpace( args[0] )
-    ? args[0] : "../../../images/ticket02.jpg";
+    ? args[0] : "../../../images/ticket01.jpg";
 
 using var inputStream = File.OpenRead(sourceImageFilename);
 
@@ -22,71 +23,59 @@ using Image<Rgba32> resampledImage = sourceImage.Clone( x => x
     .BinaryThreshold( BinaryLuminanceThreshold, BinaryThresholdMode.Luminance)
     );
 
+var textBlocks = SeekTextBlocks( resampledImage );
 
-int topY = 0;
-List<TextBlock> textLines = new();
-SeekState state = SeekState.Start;
-for ( int y = 0; y < resampledImage.Height; y++ ) {
-    Span<Rgba32> pixelRowSpan = resampledImage.GetPixelRowSpan( y );
-    var dark = false;
-    var light = true;
-    for ( int x = 0; x < resampledImage.Width; x++ ) {
-        var bright = pixelRowSpan[x].Brightness();
-        Console.WriteLine( bright );
-        if ( bright < TextMaxBrightness ) {
-            dark = true;
-            break;
+Painter.FillGaps( sourceImage, textBlocks, GapColor );
+Painter.DrawCuttingLine(sourceImage, textBlocks, KnifeColor);
+
+SaveImage( sourceImage,
+    Path.ChangeExtension( AddFileSuffix( sourceImageFilename, "_output"), ".png") );
+
+SaveImage( resampledImage,
+    Path.ChangeExtension( AddFileSuffix( sourceImageFilename, "_resampled" ), ".png" ) );
+
+#region Kind of Magic Stuff
+
+IReadOnlyList<TextBlock> SeekTextBlocks(Image<Rgba32> image)
+{
+    int topY = 0;
+    List<TextBlock> textBlocks = new();
+    SeekState state = SeekState.Start;
+    for ( int y = 0; y < image.Height; y++ ) {
+        var dark = HasDarkPixels( image, y );
+
+        switch ( state ) {
+            case SeekState.Start:
+                if ( dark ) {
+                    topY = y;
+                    state = SeekState.End;
+                }
+                break;
+
+            case SeekState.End:
+                if ( !dark ) {
+                    textBlocks.Add( new() { TopY = topY, BottomY = y } );
+                    state = SeekState.Start;
+                }
+                break;
         }
     }
 
-    light = !dark;
+    if ( state == SeekState.End )
+        textBlocks.Add( new() { TopY = topY, BottomY = image.Height } );
 
-    switch ( state ) {
-        case SeekState.Start:
-            if ( dark ) {
-                topY = y;
-                state = SeekState.End;
-            }
-            break;
-        case SeekState.End:
-            if ( light ) {
-                textLines.Add( new() { TopY = topY, BottomY = y } );
-                state = SeekState.Start;
-            }
-            break;
-    }
+    return textBlocks;
 }
 
-Console.WriteLine();
+bool HasDarkPixels( Image<Rgba32> image, int y )
+{
+    var dark = false;
+    Span<Rgba32> pixelRowSpan = image.GetPixelRowSpan( y );
+    for ( int x = 0; x < image.Width && !dark; x++ )
+        dark = pixelRowSpan[x].Brightness() < TextMaxBrightness;
 
-if ( state == SeekState.End )
-    textLines.Add( new() { TopY = topY, BottomY = resampledImage.Height } );
-
-Painter.DrawCuttingLine(sourceImage, textLines, KnifeColor);
-
-// Fill gaps
-//int yy = 0;
-//foreach ( var block in textLines ) {
-//    for ( int y = block.Item1; y >= yy; y-- ) {
-//        Span<Rgba32> pixelRowSpan = sourceImage.GetPixelRowSpan( y );
-//        for ( int x = 0; x < sourceImage.Width; x++ )
-//            pixelRowSpan[x] = Color.Cyan;
-//    }
-//    yy = block.Item2;
-//}
-
-using var outStream = File.OpenWrite( 
-    Path.ChangeExtension(
-        AddFileSuffix( sourceImageFilename, "_output"), 
-        ".png") );
-sourceImage.Save( outStream, new PngEncoder() );//Replace Png encoder with the file format of choice
-
-using var outStream2 = File.OpenWrite( 
-    Path.ChangeExtension(
-        AddFileSuffix( sourceImageFilename, "_resampled" ),
-        ".png" ) );
-
-resampledImage.Save( outStream2, new PngEncoder() );//Replace Png encoder with the file format of choice
+    return dark;
+}
 
 string AddFileSuffix( string filename, string suffix )
     => Path.Combine(
@@ -94,6 +83,12 @@ string AddFileSuffix( string filename, string suffix )
         Path.GetFileNameWithoutExtension( filename ) 
             + suffix 
             + Path.GetExtension( filename ) );
+
+void SaveImage( Image image, string imageFilename )
+{
+    using var outStream = File.OpenWrite( imageFilename );
+    image.Save( outStream, new PngEncoder() );
+}
 
 public enum SeekState { Start, End }
 
@@ -116,16 +111,39 @@ public static class Painter
 {
     public static void DrawCuttingLine(
         Image<Rgba32> sourceImage,
-        IReadOnlyList<TextBlock> textLines,
+        IReadOnlyList<TextBlock> textBlocks,
+        Color knifeColor )
+    {
+        int lastBottomY = 0;
+        foreach ( var block in textBlocks ) {
+            var midY = lastBottomY + ( block.TopY - lastBottomY ) / 2;
+            DrawHLine( sourceImage, midY, knifeColor );
+            lastBottomY = block.BottomY;
+        }
+    }
+
+    public static void FillGaps(
+        Image<Rgba32> sourceImage,
+        IReadOnlyList<TextBlock> textBlocks,
         Color knifeColor )
     {
         int yy = 0;
-        foreach ( var block in textLines ) {
-            var y = yy + ( block.TopY - yy ) / 2;
-            Span<Rgba32> pixelRowSpan = sourceImage.GetPixelRowSpan( y );
-            for ( int x = 0; x < sourceImage.Width; x++ )
-                pixelRowSpan[x] = knifeColor;
+        foreach ( var block in textBlocks ) {
+            for ( int y = block.TopY; y >= yy; y-- )
+                DrawHLine( sourceImage, y, knifeColor );
             yy = block.BottomY;
         }
     }
+
+    public static void DrawHLine(
+        Image<Rgba32> sourceImage,
+        int y,
+        Color color )
+    {
+        Span<Rgba32> pixelRowSpan = sourceImage.GetPixelRowSpan( y );
+        for ( int x = 0; x < sourceImage.Width; x++ )
+            pixelRowSpan[x] = color;
+    }
 }
+
+#endregion
