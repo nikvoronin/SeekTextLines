@@ -3,10 +3,13 @@ using SixLabors.ImageSharp.Formats.Png;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 
-string sourceImageFilename = "../../../images/ticket02.jpg";
 const int ResampledImageWidth = 32;
 const double TextMaxBrightness = 0.3;
 const float BinaryLuminanceThreshold = 0.3f;
+Color KnifeColor = Color.Magenta;
+
+string sourceImageFilename = args.Length > 0 && string.IsNullOrWhiteSpace( args[0] )
+    ? args[0] : "../../../images/ticket02.jpg";
 
 using var inputStream = File.OpenRead(sourceImageFilename);
 
@@ -20,8 +23,8 @@ using Image<Rgba32> resampledImage = sourceImage.Clone( x => x
     );
 
 
-// [yStart, yEnd) yEnd not included in block
-List<(int, int)> textLines = new();
+int topY = 0;
+List<TextBlock> textLines = new();
 SeekState state = SeekState.Start;
 for ( int y = 0; y < resampledImage.Height; y++ ) {
     Span<Rgba32> pixelRowSpan = resampledImage.GetPixelRowSpan( y );
@@ -41,13 +44,13 @@ for ( int y = 0; y < resampledImage.Height; y++ ) {
     switch ( state ) {
         case SeekState.Start:
             if ( dark ) {
-                textLines.Add( (y, -1) );
+                topY = y;
                 state = SeekState.End;
             }
             break;
         case SeekState.End:
             if ( light ) {
-                textLines[^1] = ( textLines[^1].Item1, y);
+                textLines.Add( new() { TopY = topY, BottomY = y } );
                 state = SeekState.Start;
             }
             break;
@@ -57,16 +60,9 @@ for ( int y = 0; y < resampledImage.Height; y++ ) {
 Console.WriteLine();
 
 if ( state == SeekState.End )
-    textLines[^1] = (textLines[^1].Item1, resampledImage.Height);
+    textLines.Add( new() { TopY = topY, BottomY = resampledImage.Height } );
 
-int yy = 0;
-foreach ( var block in textLines ) {
-    var y = yy + ( block.Item1 - yy) / 2;
-    Span<Rgba32> pixelRowSpan = sourceImage.GetPixelRowSpan( y );
-    for ( int x = 0; x < sourceImage.Width; x++ )
-        pixelRowSpan[x] = Color.Cyan;
-    yy = block.Item2;
-}
+Painter.DrawCuttingLine(sourceImage, textLines, KnifeColor);
 
 // Fill gaps
 //int yy = 0;
@@ -79,13 +75,33 @@ foreach ( var block in textLines ) {
 //    yy = block.Item2;
 //}
 
-using var outStream = File.OpenWrite( sourceImageFilename.Replace(".jpg", ".png") );
+using var outStream = File.OpenWrite( 
+    Path.ChangeExtension(
+        AddFileSuffix( sourceImageFilename, "_output"), 
+        ".png") );
 sourceImage.Save( outStream, new PngEncoder() );//Replace Png encoder with the file format of choice
 
-using var outStream2 = File.OpenWrite( sourceImageFilename.Replace( ".jpg", "_resampled.png" ) );
+using var outStream2 = File.OpenWrite( 
+    Path.ChangeExtension(
+        AddFileSuffix( sourceImageFilename, "_resampled" ),
+        ".png" ) );
+
 resampledImage.Save( outStream2, new PngEncoder() );//Replace Png encoder with the file format of choice
 
+string AddFileSuffix( string filename, string suffix )
+    => Path.Combine(
+        Path.GetDirectoryName( filename ) ?? "./",
+        Path.GetFileNameWithoutExtension( filename ) 
+            + suffix 
+            + Path.GetExtension( filename ) );
+
 public enum SeekState { Start, End }
+
+public struct TextBlock
+{
+    public int TopY;
+    public int BottomY;
+}
 
 public static class Extensions
 {
@@ -94,4 +110,22 @@ public static class Extensions
 
     public static int NearestPowerOf2(this double x)
         =>  (int)Math.Pow( 2, Math.Round( Math.Log( x ) / Math.Log( 2 ) ) );
+}
+
+public static class Painter
+{
+    public static void DrawCuttingLine(
+        Image<Rgba32> sourceImage,
+        IReadOnlyList<TextBlock> textLines,
+        Color knifeColor )
+    {
+        int yy = 0;
+        foreach ( var block in textLines ) {
+            var y = yy + ( block.TopY - yy ) / 2;
+            Span<Rgba32> pixelRowSpan = sourceImage.GetPixelRowSpan( y );
+            for ( int x = 0; x < sourceImage.Width; x++ )
+                pixelRowSpan[x] = knifeColor;
+            yy = block.BottomY;
+        }
+    }
 }
