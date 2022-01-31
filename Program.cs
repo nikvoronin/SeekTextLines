@@ -9,7 +9,7 @@ const float BinaryLuminanceThreshold = 0.3f;
 Color KnifeColor = Color.Magenta;
 Color GapColor = Color.Cyan;
 
-string sourceImageFilename = args.Length > 0 && string.IsNullOrWhiteSpace( args[0] )
+string sourceImageFilename = args.Length > 0 && !string.IsNullOrWhiteSpace( args[0] )
     ? args[0] : "../../../images/ticket01.jpg";
 
 using var inputStream = File.OpenRead(sourceImageFilename);
