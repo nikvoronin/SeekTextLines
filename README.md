@@ -1,6 +1,6 @@
 # Seek Text Lines
 
-Seek for text blocks and gaps between.
+Seek and recognise text blocks in an image and sometimes gaps between.
 
 ## Generated Text
 
